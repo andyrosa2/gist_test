@@ -57,7 +57,7 @@ API endpoints used
 ## Setup / first run
 
 1. Open the live site.
-2. Create a GitHub token with `gist` scope:
+2. Create a GitHub Personal access token (classic) with `gist` permission (expires in 30 days):
    - https://github.com/settings/tokens
 3. Paste the token into the app and click "Save token".
 4. Click "Create notes gist" (recommended), or paste an existing Gist ID and click "Use gist id".
@@ -85,7 +85,7 @@ This test exercises the real add and delete flow against a real Gist.
 It can create and delete a private test Gist automatically.
 
 Required environment variables:
-- `GIST_TEST_GITHUB_PAT` (GitHub token, must have `gist` scope)
+- `GIST_TEST_GITHUB_PAT` (Personal access token (classic), must have `gist` permission, expires in 30 days)
 
 Optional environment variables:
 - `GIST_TEST_NOTES_GIST_ID` (if set, uses this existing Gist; if not set, creates and then deletes a private test Gist)
@@ -101,3 +101,31 @@ This repo is deployed using GitHub Pages from the `main` branch root.
 
 - The token and Gist ID are stored in browser localStorage on your machine.
 - If the GitHub API returns 401/403, the app clears the stored token so you can re-enter it.
+
+## About GitHub Gists
+
+A Gist is a lightweight way to share snippets of code or text via GitHub.
+
+Multiple files per Gist
+
+- A single Gist can contain multiple files (e.g., `notes.json`, `extra.txt`, `picture.txt`).
+- The GitHub API returns a `files` object where each key is a filename.
+- This app only uses one file (`notes.json`), but the Gist could hold more.
+
+Viewing your Gists
+
+- List all your Gists: https://gist.github.com/
+- View a specific Gist by ID: `https://gist.github.com/{username}/{gist_id}`
+- Example: https://gist.github.com/andyrosa2/f6437ddf0c6f3407cb8b949bad8909da
+
+Display quirks
+
+- In the "All gists" list, GitHub shows only one filename per Gist (even if there are multiple files).
+- The displayed filename is the first one alphabetically.
+- The list also shows "N files" if there are multiple, but you must click into the Gist to see all filenames.
+
+Text only
+
+- Gists only support text files.
+- You cannot upload binary files (images, PDFs, etc.) directly.
+- Workaround: store binary data as base64-encoded text (e.g., `picture.txt` containing a base64 PNG).

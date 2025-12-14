@@ -308,9 +308,26 @@
         if (!doc || typeof doc !== "object") {
           return { version: NOTES_SCHEMA_VERSION, notes: [] };
         }
-        const version = doc.version === NOTES_SCHEMA_VERSION ? doc.version : NOTES_SCHEMA_VERSION;
-        const notes = Array.isArray(doc.notes) ? doc.notes : [];
-        return { version, notes };
+
+        // Undefined version: hypothetical previous schema (did not exist in practice).
+        // Shown here to illustrate how migration would work if the schema changed.
+        // This version would have stored notes as "items" with "content" and "timestamp".
+        if (doc.version === undefined) {
+          const oldItems = Array.isArray(doc.items) ? doc.items : [];
+          const migratedNotes = oldItems.map((item) => ({
+            id: item.id || String(Date.now()),
+            createdAt: item.timestamp || nowIso(),
+            text: item.content || "",
+          }));
+          return { version: 1, notes: migratedNotes };
+        }
+
+        if (doc.version === 1) {
+          const notes = Array.isArray(doc.notes) ? doc.notes : [];
+          return { version: 1, notes };
+        }
+
+        throw new Error("Unknown notes schema version: " + doc.version);
       }
 
       async function githubRequest(path, options) {
@@ -377,7 +394,18 @@
       }
 
       async function createNotesGist() {
-        const initialDoc = { version: NOTES_SCHEMA_VERSION, notes: [] };
+        // navigator.webdriver is set to true by the browser when controlled via WebDriver
+        // protocol (Puppeteer, Selenium, Playwright). The browser sets this flag at launch
+        // based on automation flags like --remote-debugging-port. It's not spoofable from
+        // JavaScript... except it is: puppeteer-extra-plugin-stealth or evaluateOnNewDocument
+        // can override it. Real bot protection uses many signals beyond this single flag.
+        const initialDoc = {
+          version: NOTES_SCHEMA_VERSION,
+          createdBy: window.location.href,
+          createdAt: nowIso(),
+          automated: !!navigator.webdriver,
+          notes: [],
+        };
         const response = await githubRequest("/gists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -4,19 +4,41 @@ const fs = require("fs");
 const puppeteer = require("puppeteer-core");
 
 const DEFAULT_URL = "https://andyrosa2.github.io/gist_test/";
-const NOTES_FILENAME = "notes.json";
-const NOTES_SCHEMA_VERSION = 1;
 const NAVIGATION_TIMEOUT_MS = 45_000;
 const SELECTOR_TIMEOUT_MS = 20_000;
-const ACTION_TIMEOUT_MS = 20_000;
+const ACTION_TIMEOUT_MS = 60_000;
+const WAIT_POLLING_MS = 100;
+
+const GITHUB_API_BASE_URL = "https://api.github.com";
+const GISTS_API_PATH = "/gists";
+
+const SEL_TOKEN_INPUT = "#tokenInput";
+const SEL_SAVE_TOKEN_BTN = "#saveTokenBtn";
+const SEL_GIST_ID_INPUT = "#gistIdInput";
+const SEL_USE_GIST_BTN = "#useGistBtn";
+const SEL_CREATE_GIST_BTN = "#createGistBtn";
+const SEL_NOTES_CARD = "#notesCard";
+const SEL_NOTE_TEXT = "#noteText";
+const SEL_ADD_NOTE_BTN = "#addNoteBtn";
+const SEL_NOTES_ERROR = "#notesError";
+const SEL_NOTES_LIST_NOTE = "#notesList .note";
+const SEL_NOTES_LIST_NOTE_PRE = "#notesList .note pre";
+
+const ENV_GITHUB_PAT = "GIST_TEST_GITHUB_PAT";
+const ENV_NOTES_GIST_ID = "GIST_TEST_NOTES_GIST_ID";
+const ENV_BROWSER_PATH = "BROWSER_PATH";
 
 function fail(message) {
   process.stderr.write(`FAIL: ${message}\n`);
   process.exitCode = 1;
 }
 
+function log(message) {
+  process.stderr.write(`LOG: ${message}\n`);
+}
+
 function getRequiredEnv(name) {
-  const value = process.env[name] ? String(process.env[name]).trim() : "";
+  const value = getOptionalEnv(name);
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
@@ -29,16 +51,22 @@ function getOptionalEnv(name) {
 }
 
 function getGithubToken() {
-  const pat = getOptionalEnv("GIST_TEST_GITHUB_PAT");
-  if (pat) {
-    return pat;
-  }
+  return getRequiredEnv(ENV_GITHUB_PAT);
+}
 
-  return getRequiredEnv("GIST_TEST_GITHUB_PAT");
+function getNotesErrorTextInPage() {
+  const errorElement = document.querySelector("#notesError");
+  if (!errorElement) {
+    return "";
+  }
+  if (errorElement.classList.contains("hidden")) {
+    return "";
+  }
+  return String(errorElement.textContent || "").trim();
 }
 
 async function githubApiRequest(token, path, options) {
-  const response = await fetch("https://api.github.com" + path, {
+  const response = await fetch(GITHUB_API_BASE_URL + path, {
     ...options,
     headers: {
       "Authorization": "token " + token,
@@ -57,42 +85,19 @@ async function githubApiRequest(token, path, options) {
   return response;
 }
 
-async function createTestNotesGist(token) {
-  const emptyDoc = { version: NOTES_SCHEMA_VERSION, notes: [] };
-  const response = await githubApiRequest(token, "/gists", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      description: "gist_test puppeteer e2e notes",
-      public: false,
-      files: {
-        [NOTES_FILENAME]: {
-          content: JSON.stringify(emptyDoc, null, 2),
-        },
-      },
-    }),
-  });
-
-  const data = await response.json();
-  if (!data || !data.id) {
-    throw new Error("Unexpected response creating gist");
-  }
-  return String(data.id);
-}
-
 async function deleteGist(token, gistId) {
-  await githubApiRequest(token, "/gists/" + encodeURIComponent(gistId), {
+  await githubApiRequest(token, GISTS_API_PATH + "/" + encodeURIComponent(gistId), {
     method: "DELETE",
   });
 }
 
 function findBrowserExecutablePath() {
-  const envPath = process.env.BROWSER_PATH ? String(process.env.BROWSER_PATH).trim() : "";
+  const envPath = getOptionalEnv(ENV_BROWSER_PATH);
   if (envPath) {
     if (fs.existsSync(envPath)) {
       return envPath;
     }
-    throw new Error(`BROWSER_PATH does not exist: ${envPath}`);
+    throw new Error(`${ENV_BROWSER_PATH} does not exist: ${envPath}`);
   }
 
   const candidatePaths = [
@@ -125,26 +130,157 @@ async function assertVisible(page, selector, label) {
   }
 }
 
-async function waitForNoteCount(page, expectedCount, label) {
-  const deadlineMs = Date.now() + ACTION_TIMEOUT_MS;
-  while (Date.now() < deadlineMs) {
-    const actualCount = await page.$$eval("#notesList .note", (elements) => elements.length);
-    if (actualCount === expectedCount) {
-      return;
-    }
-    await page.waitForTimeout(200);
+async function waitForEnabled(page, selector, label) {
+  try {
+    await page.waitForFunction(
+      (sel) => {
+        const element = document.querySelector(sel);
+        return !!element && element.disabled === false;
+      },
+      { timeout: ACTION_TIMEOUT_MS },
+      selector
+    );
+  } catch (err) {
+    fail(`${label} did not become enabled (${selector})`);
+    throw err;
   }
-  const finalCount = await page.$$eval("#notesList .note", (elements) => elements.length);
-  fail(`${label}: expected ${expectedCount} notes, got ${finalCount}`);
-  throw new Error("Assertion failed");
+}
+
+async function waitForGistPatch(page, gistId, label) {
+  const expectedUrlPrefix = GITHUB_API_BASE_URL + GISTS_API_PATH + "/" + encodeURIComponent(gistId);
+  let response;
+  const startedAtMs = Date.now();
+  try {
+    response = await page.waitForResponse(
+      (resp) => {
+        const request = resp.request();
+        if (!request) {
+          return false;
+        }
+        if (request.method() !== "PATCH") {
+          return false;
+        }
+        const url = resp.url();
+        return typeof url === "string" && url.startsWith(expectedUrlPrefix);
+      },
+      { timeout: ACTION_TIMEOUT_MS }
+    );
+  } catch (err) {
+    fail(`${label}: timed out waiting for gist PATCH request`);
+    throw err;
+  }
+
+  const elapsedMs = Date.now() - startedAtMs;
+  log(`${label}: gist PATCH HTTP ${response.status()} (${elapsedMs} ms): ${response.url()}`);
+
+  if (!response.ok()) {
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch {
+      responseText = "";
+    }
+    const details = responseText ? ": " + responseText : "";
+    fail(`${label}: gist PATCH failed with HTTP ${response.status()}${details}`);
+    throw new Error("Gist PATCH failed");
+  }
+
+  return response;
+}
+
+async function waitForAddAndGistPatch(page, gistId) {
+  await Promise.all([
+    waitForGistPatch(page, gistId, "After add"),
+    page.click(SEL_ADD_NOTE_BTN),
+  ]);
+}
+
+async function waitForNoteCount(page, expectedCount, label) {
+  const waitOptions = { timeout: ACTION_TIMEOUT_MS, polling: WAIT_POLLING_MS };
+
+  const noteCountPromise = page.waitForFunction(
+    (selector, count) => {
+      return document.querySelectorAll(selector).length === count;
+    },
+    waitOptions,
+    SEL_NOTES_LIST_NOTE,
+    expectedCount
+  );
+
+  const errorPromise = page
+    .waitForFunction(
+      getNotesErrorTextInPage,
+      waitOptions
+    )
+    .then(async () => {
+      const errorText = await page.evaluate(getNotesErrorTextInPage);
+      const message = errorText ? errorText : "Unknown error";
+      throw new Error(`${label}: app error: ${message}`);
+    });
+
+  try {
+    await Promise.race([noteCountPromise, errorPromise]);
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (message.includes(": app error:")) {
+      fail(message);
+      throw err;
+    }
+
+    const finalCount = await page.$$eval(SEL_NOTES_LIST_NOTE, (elements) => elements.length);
+    fail(`${label}: expected ${expectedCount} notes, got ${finalCount}`);
+    throw new Error("Assertion failed");
+  }
+}
+
+async function waitForGistPost(page, label) {
+  const expectedUrl = GITHUB_API_BASE_URL + GISTS_API_PATH;
+  let response;
+  const startedAtMs = Date.now();
+  try {
+    response = await page.waitForResponse(
+      (resp) => {
+        const request = resp.request();
+        if (!request) {
+          return false;
+        }
+        if (request.method() !== "POST") {
+          return false;
+        }
+        const url = resp.url();
+        return typeof url === "string" && url === expectedUrl;
+      },
+      { timeout: ACTION_TIMEOUT_MS }
+    );
+  } catch (err) {
+    fail(`${label}: timed out waiting for gist POST request`);
+    throw err;
+  }
+
+  const elapsedMs = Date.now() - startedAtMs;
+  log(`${label}: gist POST HTTP ${response.status()} (${elapsedMs} ms): ${response.url()}`);
+
+  if (!response.ok()) {
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch {
+      responseText = "";
+    }
+    const details = responseText ? ": " + responseText : "";
+    fail(`${label}: gist POST failed with HTTP ${response.status()}${details}`);
+    throw new Error("Gist POST failed");
+  }
+
+  return response;
 }
 
 async function main() {
   const targetUrl = process.argv[2] ? String(process.argv[2]) : DEFAULT_URL;
   const githubToken = getGithubToken();
-  const providedGistId = getOptionalEnv("GIST_TEST_NOTES_GIST_ID");
+  const providedGistId = getOptionalEnv(ENV_NOTES_GIST_ID);
   const shouldCreateGist = !providedGistId;
-  const gistId = shouldCreateGist ? await createTestNotesGist(githubToken) : providedGistId;
+  let gistId = providedGistId;
 
   const executablePath = findBrowserExecutablePath();
 
@@ -157,39 +293,62 @@ async function main() {
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
 
-    // Load once to establish origin, then inject localStorage and reload.
     await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
 
-    await page.evaluate(
-      (token, notesGistId) => {
-        localStorage.setItem("GITHUB_TOKEN", token);
-        localStorage.setItem("NOTES_GIST_ID", notesGistId);
-      },
-      githubToken,
-      gistId
-    );
+    // Enter token via webpage UI.
+    log("Entering token via webpage...");
+    await assertVisible(page, SEL_TOKEN_INPUT, "Token input");
+    await page.focus(SEL_TOKEN_INPUT);
+    await page.keyboard.type(githubToken);
+    await page.click(SEL_SAVE_TOKEN_BTN);
 
-    await page.reload({ waitUntil: "domcontentloaded" });
+    // If gist ID provided, enter it via webpage UI.
+    if (gistId) {
+      log("Entering gist ID via webpage...");
+      await assertVisible(page, SEL_GIST_ID_INPUT, "Gist ID input");
+      await page.focus(SEL_GIST_ID_INPUT);
+      await page.keyboard.type(gistId);
+      await page.click(SEL_USE_GIST_BTN);
+    } else {
+      // Create gist via the webpage.
+      log("Creating gist via webpage...");
+      await assertVisible(page, SEL_CREATE_GIST_BTN, "Create gist button");
 
-    await assertVisible(page, "#notesCard", "Notes card");
-    await assertVisible(page, "#noteText", "Note textarea");
-    await assertVisible(page, "#addNoteBtn", "Add note button");
+      const [postResponse] = await Promise.all([
+        waitForGistPost(page, "Create gist"),
+        page.click(SEL_CREATE_GIST_BTN),
+      ]);
+
+      const responseData = await postResponse.json();
+      if (!responseData || !responseData.id) {
+        fail("Gist POST response did not contain an id");
+        throw new Error("Gist creation failed");
+      }
+      gistId = String(responseData.id);
+      log(`Gist created: ${gistId}`);
+    }
+
+    await assertVisible(page, SEL_NOTES_CARD, "Notes card");
+    await assertVisible(page, SEL_NOTE_TEXT, "Note textarea");
+    await assertVisible(page, SEL_ADD_NOTE_BTN, "Add note button");
 
     // Record current count.
-    const initialCount = await page.$$eval("#notesList .note", (elements) => elements.length);
+    const initialCount = await page.$$eval(SEL_NOTES_LIST_NOTE, (elements) => elements.length);
 
     const marker = `e2e-test ${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    await page.focus("#noteText");
+    await page.focus(SEL_NOTE_TEXT);
     await page.keyboard.type(marker);
 
-    await page.click("#addNoteBtn");
+    await waitForEnabled(page, SEL_ADD_NOTE_BTN, "Add note button");
+
+    await waitForAddAndGistPatch(page, gistId);
 
     // Wait for count to increase.
     await waitForNoteCount(page, initialCount + 1, "After add");
 
     // Ensure the marker text exists in the list.
-    const found = await page.$$eval("#notesList .note pre", (elements, text) => {
+    const found = await page.$$eval(SEL_NOTES_LIST_NOTE_PRE, (elements, text) => {
       return elements.some((el) => String(el.textContent || "").includes(text));
     }, marker);
 
@@ -199,7 +358,7 @@ async function main() {
     }
 
     // Delete the newly added note by finding its container and clicking its Delete button.
-    const deleted = await page.$$eval("#notesList .note", (noteElements, text) => {
+    const deleted = await page.$$eval(SEL_NOTES_LIST_NOTE, (noteElements, text) => {
       for (const noteElement of noteElements) {
         const pre = noteElement.querySelector("pre");
         const deleteButton = noteElement.querySelector("button");
@@ -215,6 +374,8 @@ async function main() {
       fail("Could not locate note to delete");
       return;
     }
+
+    await waitForGistPatch(page, gistId, "After delete");
 
     await waitForNoteCount(page, initialCount, "After delete");
 
