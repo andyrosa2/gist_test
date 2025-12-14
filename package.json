@@ -7,6 +7,6 @@
     "test:puppeteer": "node tests/puppeteer_smoke_test.js"
   },
   "dependencies": {
-    "puppeteer": "^24.24.0"
+    "puppeteer-core": "^24.24.0"
   }
 }

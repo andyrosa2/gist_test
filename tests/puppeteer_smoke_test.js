@@ -1,6 +1,7 @@
 "use strict";
 
-const puppeteer = require("puppeteer");
+const fs = require("fs");
+const puppeteer = require("puppeteer-core");
 
 const DEFAULT_URL = "https://andyrosa2.github.io/gist_test/";
 const NAVIGATION_TIMEOUT_MS = 45_000;
@@ -9,6 +10,33 @@ const SELECTOR_TIMEOUT_MS = 15_000;
 function fail(message) {
   process.stderr.write(`FAIL: ${message}\n`);
   process.exitCode = 1;
+}
+
+function findBrowserExecutablePath() {
+  const envPath = process.env.BROWSER_PATH ? String(process.env.BROWSER_PATH).trim() : "";
+  if (envPath) {
+    if (fs.existsSync(envPath)) {
+      return envPath;
+    }
+    throw new Error(`BROWSER_PATH does not exist: ${envPath}`);
+  }
+
+  const candidatePaths = [
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  throw new Error(
+    "Could not find a local browser executable. Set BROWSER_PATH to msedge.exe or chrome.exe, or install Edge/Chrome."
+  );
 }
 
 async function assertVisible(page, selector, label) {
@@ -31,19 +59,14 @@ async function assertDisabled(page, selector, label) {
   }
 }
 
-async function assertEnabled(page, selector, label) {
-  const isEnabled = await page.$eval(selector, (element) => element.disabled === false);
-  if (!isEnabled) {
-    fail(`${label} expected enabled (${selector})`);
-    throw new Error("Assertion failed");
-  }
-}
-
 async function main() {
   const targetUrl = process.argv[2] ? String(process.argv[2]) : DEFAULT_URL;
 
+  const executablePath = findBrowserExecutablePath();
+
   const browser = await puppeteer.launch({
     headless: true,
+    executablePath,
   });
 
   try {
