@@ -85,7 +85,7 @@ This test exercises the real add and delete flow against a real Gist.
 It can create and delete a private test Gist automatically.
 
 Required environment variables:
-- `PUP` (GitHub token, must have `gist` scope)
+- `GIST_TEST_GITHUB_PAT` (GitHub token, must have `gist` scope)
 
 Optional environment variables:
 - `GIST_TEST_NOTES_GIST_ID` (if set, uses this existing Gist; if not set, creates and then deletes a private test Gist)

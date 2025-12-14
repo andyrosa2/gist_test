@@ -29,11 +29,12 @@ function getOptionalEnv(name) {
 }
 
 function getGithubToken() {
-  const pup = getOptionalEnv("PUP");
-  if (pup) {
-    return pup;
+  const pat = getOptionalEnv("GIST_TEST_GITHUB_PAT");
+  if (pat) {
+    return pat;
   }
-  return getRequiredEnv("GIST_TEST_GITHUB_TOKEN");
+
+  return getRequiredEnv("GIST_TEST_GITHUB_PAT");
 }
 
 async function githubApiRequest(token, path, options) {
