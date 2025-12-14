@@ -1,0 +1,12 @@
+{
+  "name": "gist_test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Puppeteer smoke test for the gist_test GitHub Pages notes app",
+  "scripts": {
+    "test:puppeteer": "node tests/puppeteer_smoke_test.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.24.0"
+  }
+}
