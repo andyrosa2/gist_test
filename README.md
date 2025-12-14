@@ -74,10 +74,21 @@ Install dependencies:
 - `npm install`
 
 Run the test:
-- `npm run test:puppeteer`
+- `npm run test:smoke`
 
 By default it tries to launch Microsoft Edge or Google Chrome from common Windows install paths.
 If your browser is elsewhere, set `BROWSER_PATH` to the full path of `msedge.exe` or `chrome.exe`.
+
+## End-to-end test (add + delete)
+
+This test exercises the real add and delete flow against a real Gist, so it requires credentials and a dedicated test Gist.
+
+Required environment variables:
+- `GIST_TEST_GITHUB_TOKEN` (must have `gist` scope)
+- `GIST_TEST_NOTES_GIST_ID` (the Gist ID that contains `notes.json`)
+
+Run it:
+- `npm run test:e2e`
 
 ## Deployment
 
