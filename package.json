@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "description": "Puppeteer smoke test for the gist_test GitHub Pages notes app",
   "scripts": {
-    "test:smoke": "node tests/puppeteer_smoke_test.js",
-    "test:e2e": "node tests/puppeteer_e2e_add_delete_test.js"
+    "test": "node tests/puppeteer_smoke_test.js 2>&1 && node tests/puppeteer_e2e_test.js 2>&1",
+    "test:smoke": "node tests/puppeteer_smoke_test.js 2>&1",
+    "test:e2e": "node tests/puppeteer_e2e_test.js 2>&1"
   },
   "dependencies": {
     "puppeteer-core": "^24.24.0"
