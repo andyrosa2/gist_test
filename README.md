@@ -81,11 +81,14 @@ If your browser is elsewhere, set `BROWSER_PATH` to the full path of `msedge.exe
 
 ## End-to-end test (add + delete)
 
-This test exercises the real add and delete flow against a real Gist, so it requires credentials and a dedicated test Gist.
+This test exercises the real add and delete flow against a real Gist.
+It can create and delete a private test Gist automatically.
 
 Required environment variables:
-- `GIST_TEST_GITHUB_TOKEN` (must have `gist` scope)
-- `GIST_TEST_NOTES_GIST_ID` (the Gist ID that contains `notes.json`)
+- `PUP` (GitHub token, must have `gist` scope)
+
+Optional environment variables:
+- `GIST_TEST_NOTES_GIST_ID` (if set, uses this existing Gist; if not set, creates and then deletes a private test Gist)
 
 Run it:
 - `npm run test:e2e`

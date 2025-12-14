@@ -4,6 +4,8 @@ const fs = require("fs");
 const puppeteer = require("puppeteer-core");
 
 const DEFAULT_URL = "https://andyrosa2.github.io/gist_test/";
+const NOTES_FILENAME = "notes.json";
+const NOTES_SCHEMA_VERSION = 1;
 const NAVIGATION_TIMEOUT_MS = 45_000;
 const SELECTOR_TIMEOUT_MS = 20_000;
 const ACTION_TIMEOUT_MS = 20_000;
@@ -19,6 +21,68 @@ function getRequiredEnv(name) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function getOptionalEnv(name) {
+  const value = process.env[name] ? String(process.env[name]).trim() : "";
+  return value;
+}
+
+function getGithubToken() {
+  const pup = getOptionalEnv("PUP");
+  if (pup) {
+    return pup;
+  }
+  return getRequiredEnv("GIST_TEST_GITHUB_TOKEN");
+}
+
+async function githubApiRequest(token, path, options) {
+  const response = await fetch("https://api.github.com" + path, {
+    ...options,
+    headers: {
+      "Authorization": "token " + token,
+      "Accept": "application/vnd.github+json",
+      ...(options && options.headers ? options.headers : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    const error = new Error("GitHub API error " + response.status + ": " + responseText);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response;
+}
+
+async function createTestNotesGist(token) {
+  const emptyDoc = { version: NOTES_SCHEMA_VERSION, notes: [] };
+  const response = await githubApiRequest(token, "/gists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: "gist_test puppeteer e2e notes",
+      public: false,
+      files: {
+        [NOTES_FILENAME]: {
+          content: JSON.stringify(emptyDoc, null, 2),
+        },
+      },
+    }),
+  });
+
+  const data = await response.json();
+  if (!data || !data.id) {
+    throw new Error("Unexpected response creating gist");
+  }
+  return String(data.id);
+}
+
+async function deleteGist(token, gistId) {
+  await githubApiRequest(token, "/gists/" + encodeURIComponent(gistId), {
+    method: "DELETE",
+  });
 }
 
 function findBrowserExecutablePath() {
@@ -76,8 +140,10 @@ async function waitForNoteCount(page, expectedCount, label) {
 
 async function main() {
   const targetUrl = process.argv[2] ? String(process.argv[2]) : DEFAULT_URL;
-  const githubToken = getRequiredEnv("GIST_TEST_GITHUB_TOKEN");
-  const gistId = getRequiredEnv("GIST_TEST_NOTES_GIST_ID");
+  const githubToken = getGithubToken();
+  const providedGistId = getOptionalEnv("GIST_TEST_NOTES_GIST_ID");
+  const shouldCreateGist = !providedGistId;
+  const gistId = shouldCreateGist ? await createTestNotesGist(githubToken) : providedGistId;
 
   const executablePath = findBrowserExecutablePath();
 
@@ -154,6 +220,19 @@ async function main() {
     process.stdout.write("PASS\n");
   } finally {
     await browser.close();
+
+    if (shouldCreateGist) {
+      try {
+        await deleteGist(githubToken, gistId);
+      } catch (err) {
+        fail(
+          "Failed to delete auto-created test gist " +
+            gistId +
+            ": " +
+            String(err && err.message ? err.message : err)
+        );
+      }
+    }
   }
 }
 
